@@ -24,7 +24,7 @@ st.title("🔵 Painel Conta Azul - Análise Inteligente")
 st.markdown("---")
 
 if not oauth.client_id or not oauth.client_secret:
-    st.error("⚠️ **Credenciais não encontradas!** Verifique seu arquivo `.env`.")
+    st.error("⚠️ **Credenciais não encontradas!** Verifique os Segredos do seu app no Streamlit Cloud.")
     st.stop()
 
 with st.sidebar:
@@ -48,16 +48,24 @@ with st.sidebar:
                     del st.session_state[key]
             st.query_params.clear()
             st.rerun()
+    
+    # CORREÇÃO APLICADA AQUI
     elif 'code' in query_params and 'state' in query_params:
         with st.spinner("Processando autenticação..."):
             try:
-                token_data = oauth.exchange_code_for_token(query_params['code'], query_params['state'])
+                # Pegando o primeiro item da lista, como exigido pelo Streamlit
+                code = query_params['code'][0]
+                state = query_params['state'][0]
+                
+                token_data = oauth.exchange_code_for_token(code, state)
                 st.session_state.token_data = token_data
+                
                 st.query_params.clear()
                 st.success("✅ Autenticação realizada!")
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Erro na autenticação: {e}")
+
     else:
         st.warning("❌ Não autenticado")
         auth_url = oauth.generate_auth_url()
@@ -70,7 +78,6 @@ if token_data and not oauth.is_token_expired(token_data):
     if 'historico' not in st.session_state:
         st.session_state.historico = []
 
-    # NOVO: MODO DE INVESTIGAÇÃO
     st.sidebar.markdown("---")
     modo_investigacao = st.sidebar.checkbox("🕵️‍♂️ Ativar Modo de Investigação")
     st.sidebar.caption("Ative para ignorar os filtros de categoria/descrição e ver os dados brutos da API para um período.")
@@ -95,7 +102,6 @@ if token_data and not oauth.is_token_expired(token_data):
                     "tamanho_pagina": 1000
                 }
 
-                # Se o modo de investigação NÃO estiver ativo, aplica os filtros
                 if not modo_investigacao:
                     categoria_id = None
                     if analise["categoria_nome"]:
@@ -126,7 +132,7 @@ if token_data and not oauth.is_token_expired(token_data):
 
     if st.session_state.historico:
         st.subheader("💬 Histórico da Conversa")
-        item = st.session_state.historico[1] # Apenas a última resposta
+        item = st.session_state.historico[1]
         pergunta_item = st.session_state.historico[0]
 
         st.markdown(f"**🙋 Você:** {pergunta_item['conteudo']}")
