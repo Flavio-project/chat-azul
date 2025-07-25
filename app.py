@@ -1,13 +1,16 @@
 import streamlit as st
-from datetime import date
+from datetime import date, datetime
 from modules.oauth2 import ContaAzulOAuth2
 from modules.conta_azul_api import FerramentasContaAzul
 from openai import OpenAI
 import json
+import pytz
 
 # --- CONFIGURAÇÃO INICIAL ---
 st.set_page_config(page_title="Painel Inteligente Conta Azul", layout="wide")
 oauth = ContaAzulOAuth2()
+TIMEZONE = "America/Araguaina"
+TIMEZONE_OBJ = pytz.timezone(TIMEZONE)
 
 # --- FUNÇÕES PRINCIPAIS ---
 def executar_plano_da_ia(plano, ferramentas):
@@ -23,16 +26,52 @@ def executar_plano_da_ia(plano, ferramentas):
 # --- INTERFACE E LÓGICA DE AUTENTICAÇÃO ---
 st.title("🔵 Painel Inteligente Conta Azul (v.IA)")
 
-# Bloco de autenticação (igual ao anterior, mas agora lê dos secrets)
 if not st.secrets.get("CLIENT_ID") or not st.secrets.get("CLIENT_SECRET"):
     st.error("As credenciais da Conta Azul não foram configuradas nos Segredos (Secrets) do Streamlit.")
     st.stop()
 
+# --- BLOCO DE AUTENTICAÇÃO NA SIDEBAR (COMPLETO E CORRIGIDO) ---
 with st.sidebar:
-    # ... (cole aqui o bloco `with st.sidebar:` da nossa penúltima versão do app.py) ...
-    # Ele já está correto e não precisa de mudanças.
+    st.header("🔐 Status OAuth2")
+    current_time = datetime.now(TIMEZONE_OBJ)
+    st.info(f"🕐 Horário: {current_time.strftime('%H:%M:%S')} ({TIMEZONE})")
+    query_params = st.query_params
+    token_data = st.session_state.get('token_data')
 
-# --- LÓGICA PRINCIPAL DA APLICAÇÃO ---
+    if token_data and not oauth.is_token_expired(token_data):
+        st.success("✅ Autenticado")
+        try:
+            expires_at = datetime.fromisoformat(token_data['expires_at'])
+            st.info(f"Token expira em: {expires_at.strftime('%H:%M:%S')}")
+        except:
+            st.info("Token Válido")
+        if st.button("🚪 Logout"):
+            keys_to_delete = ['token_data', 'oauth_state', 'last_response']
+            for key in keys_to_delete:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.query_params.clear()
+            st.rerun()
+    elif 'code' in query_params and 'state' in query_params:
+        with st.spinner("Processando autenticação..."):
+            try:
+                code = query_params['code'][0]
+                state = query_params['state'][0]
+                
+                token_data = oauth.exchange_code_for_token(code, state)
+                st.session_state.token_data = token_data
+                
+                st.query_params.clear()
+                st.success("✅ Autenticação realizada!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Erro na autenticação: {e}")
+    else:
+        st.warning("❌ Não autenticado")
+        auth_url = oauth.generate_auth_url()
+        st.markdown(f"<a href='{auth_url}' target='_self' style='display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-align: center; text-decoration: none; border-radius: 5px;'>🔑 Fazer Login com Conta Azul</a>", unsafe_allow_html=True)
+
+# --- LÓGICA PRINCIPAL DA APLICAÇÃO (APÓS LOGIN) ---
 token_data = st.session_state.get('token_data')
 if token_data and not oauth.is_token_expired(token_data):
     st.sidebar.title("Configuração da IA")
@@ -57,7 +96,7 @@ if token_data and not oauth.is_token_expired(token_data):
                     Hoje é {date.today().strftime('%Y-%m-%d')}.
 
                     Você tem acesso à seguinte ferramenta:
-                    - `buscar_despesas(data_de, data_ate, descricao)`: Busca despesas em um período.
+                    - `buscar_despesas(data_de, data_ate, descricao)`: Busca despesas (contas a pagar) em um período. Pode filtrar por uma descrição textual. 'data_de' e 'data_ate' são obrigatórios e devem estar no formato 'AAAA-MM-DD'.
 
                     Responda APENAS com um objeto JSON indicando a ferramenta e seus argumentos.
                     Exemplo de pergunta: "gastos com frete este ano"
@@ -85,11 +124,11 @@ if token_data and not oauth.is_token_expired(token_data):
                     prompt_resumo = f"""
                     Você é um assistente financeiro.
                     A pergunta original do usuário foi: "{pergunta}"
-                    Os dados brutos da API são: {json.dumps(dados_api.get("itens", []), indent=2)}
+                    Os dados brutos da API são: {json.dumps(dados_api.get("itens", []), indent=2, ensure_ascii=False)}
 
-                    Resuma os dados de forma clara e amigável para o usuário.
+                    Resuma os dados de forma clara e amigável em português.
                     Comece com o valor total e o número de lançamentos.
-                    Depois, se houver poucos itens, liste alguns exemplos.
+                    Depois, se houver poucos itens, liste os 5 primeiros exemplos.
                     Se não houver itens, diga que nada foi encontrado para os filtros.
                     """
                     response_resumo = client.chat.completions.create(
@@ -106,6 +145,7 @@ if token_data and not oauth.is_token_expired(token_data):
 
     if 'last_response' in st.session_state:
         response = st.session_state.last_response
+        st.markdown("### Resposta da IA")
         st.markdown(response["resumo"])
         with st.expander("🔍 Detalhes da Execução"):
             st.write("**Plano gerado pela IA:**")
