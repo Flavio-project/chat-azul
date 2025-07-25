@@ -1,51 +1,43 @@
-# modules/oauth2.py
+import streamlit as st
 import requests
 import base64
 import urllib.parse
-import unicodedata
 from datetime import datetime, timedelta
-from modules.config import CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, AUTH_URL, TOKEN_URL, API_BASE_URL, SCOPE, TIMEZONE
 import pytz
-
-TIMEZONE_OBJ = pytz.timezone(TIMEZONE)
-
-def normalizar(texto):
-    if not texto: return ""
-    return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII').lower().strip()
+import os
 
 class ContaAzulOAuth2:
     def __init__(self):
-        self.client_id = CLIENT_ID
-        self.client_secret = CLIENT_SECRET
-        self.redirect_uri = REDIRECT_URI
-        self.auth_url = AUTH_URL
-        self.token_url = TOKEN_URL
-        self.api_base_url = API_BASE_URL
-        self.scope = SCOPE
+        self.client_id = st.secrets.get("CLIENT_ID")
+        self.client_secret = st.secrets.get("CLIENT_SECRET")
+        self.redirect_uri = st.secrets.get("REDIRECT_URI")
+        self.api_base_url = "https://api-v2.contaazul.com/v1"
+        self.token_url = "https://auth.contaazul.com/oauth2/token"
+        self.auth_url = "https://auth.contaazul.com/oauth2/authorize"
+        self.scope = "openid profile aws.cognito.signin.user.admin"
+        self.timezone = pytz.timezone("America/Araguaina")
 
     def generate_auth_url(self):
-        state = "34121401"
-        import streamlit as st
-        st.session_state.oauth_state = state
-        params = { 'response_type': 'code', 'client_id': self.client_id, 'redirect_uri': self.redirect_uri, 'state': state, 'scope': self.scope }
+        st.session_state.oauth_state = "34121401"
+        params = { 'response_type': 'code', 'client_id': self.client_id, 'redirect_uri': self.redirect_uri, 'state': st.session_state.oauth_state, 'scope': self.scope }
         return f"{self.auth_url}?{urllib.parse.urlencode(params)}"
 
     def exchange_code_for_token(self, code, state):
-        if state != "34121401": raise Exception("State inválido")
+        if state != st.session_state.get("oauth_state"): raise Exception("State inválido")
         auth_string = f"{self.client_id}:{self.client_secret}"
         auth_b64 = base64.b64encode(auth_string.encode('ascii')).decode('ascii')
         headers = { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': f'Basic {auth_b64}' }
-        data = { 'client_id': self.client_id, 'client_secret': self.client_secret, 'grant_type': 'authorization_code', 'code': code, 'redirect_uri': self.redirect_uri }
+        data = { 'grant_type': 'authorization_code', 'code': code, 'redirect_uri': self.redirect_uri }
         response = requests.post(self.token_url, headers=headers, data=data)
         response.raise_for_status()
         token_data = response.json()
-        expires_at = datetime.now(TIMEZONE_OBJ) + timedelta(seconds=token_data.get('expires_in', 3600))
+        expires_at = datetime.now(self.timezone) + timedelta(seconds=token_data.get('expires_in', 3600))
         token_data['expires_at'] = expires_at.isoformat()
         return token_data
 
     def is_token_expired(self, token_data):
         if not token_data or 'expires_at' not in token_data: return True
-        return datetime.now(TIMEZONE_OBJ) >= datetime.fromisoformat(token_data['expires_at'])
+        return datetime.now(self.timezone) >= datetime.fromisoformat(token_data['expires_at'])
 
     def make_api_request(self, endpoint, method='GET', data=None, access_token=None, params=None):
         if not access_token: raise Exception("Access token é obrigatório")
