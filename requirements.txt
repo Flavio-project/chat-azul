@@ -2,4 +2,4 @@ streamlit
 requests
 python-dotenv
 pytz
-google-generative-ai
+openai
